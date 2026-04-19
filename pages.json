@@ -73,6 +73,12 @@
 			}
 		},
 		{
+			"path": "pages/chat/participant-profile",
+			"style": {
+				"navigationBarTitleText": "详细资料"
+			}
+		},
+		{
 			"path": "pages/profile/profile",
 			"style": {
 				"navigationBarTitleText": "我的",

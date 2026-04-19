@@ -3,7 +3,7 @@
 		<view class="navbar-wrap" :style="{ paddingTop: statusBarPx + 'px' }">
 			<view class="navbar">
 				<view class="navbar-side" />
-				<view class="navbar-center">
+				<view class="navbar-center" @click="openHallInfo">
 					<text class="navbar-title">全员群</text>
 					<text class="navbar-sub">共 {{ agentCount }} 位数字员工 · 日报与总览发在本群</text>
 				</view>
@@ -24,7 +24,11 @@
 					:class="{ 'is-mine': msg.isMine }"
 				>
 					<view v-if="!msg.isMine" class="hall-left">
-						<view class="hall-av" :style="{ background: avatarColor(msg.senderName || '') }">
+						<view
+							class="hall-av"
+							:style="{ background: avatarColor(msg.senderName || '') }"
+							@click.stop="openHallAvatar(false, msg)"
+						>
 							<text class="hall-av-t">{{ avatarLetter(msg) }}</text>
 						</view>
 						<view class="hall-bubble-wrap">
@@ -36,10 +40,15 @@
 						</view>
 					</view>
 					<view v-else class="hall-right">
-						<view class="hall-bubble mine">
-							<text class="hall-text">{{ msg.content }}</text>
+						<view class="hall-av hall-av-self" @click.stop="openHallAvatar(true, msg)">
+							<text class="hall-av-t">{{ myAvatarChar }}</text>
 						</view>
-						<text class="hall-time">{{ formatTime(msg.time) }}</text>
+						<view class="hall-mine-col">
+							<view class="hall-bubble mine">
+								<text class="hall-text">{{ msg.content }}</text>
+							</view>
+							<text class="hall-time">{{ formatTime(msg.time) }}</text>
+						</view>
 					</view>
 				</view>
 			</view>
@@ -65,6 +74,8 @@
 		loadDigitalAgents,
 		HQ_ID,
 	} from "@/utils/virtualTeamStore";
+	import { getUserInfo } from "@/utils/index";
+	import { findAgentBySenderLabel } from "@/utils/participantProfileNav";
 
 	export default {
 		components: { AppTabBar },
@@ -81,6 +92,11 @@
 			agentCount() {
 				return loadDigitalAgents().length;
 			},
+			myAvatarChar() {
+				const u = getUserInfo() || {};
+				const n = u.nickname || u.name || u.username || u.phone || u.mobile || "我";
+				return String(n).slice(0, 1);
+			},
 		},
 		onLoad() {
 			const sys = uni.getSystemInfoSync();
@@ -95,6 +111,38 @@
 			openHallSettings() {
 				uni.navigateTo({
 					url: `/pages/chat/chat-settings?mode=virtual&kind=hq&id=${encodeURIComponent(HQ_ID)}&title=${encodeURIComponent("全员群")}`,
+				});
+			},
+			openHallInfo() {
+				const n = this.agentCount;
+				uni.navigateTo({
+					url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent("全员群")}&hint=${encodeURIComponent(
+						`公司大群：共 ${n} 位数字员工，日报与经理总览会推送至本群。`,
+					)}`,
+				});
+			},
+			openHallAvatar(isMine, msg) {
+				if (isMine) {
+					uni.navigateTo({ url: "/pages/chat/participant-profile?kind=self" });
+					return;
+				}
+				const name = (msg && msg.senderName) || "";
+				const matched = findAgentBySenderLabel(name);
+				if (matched) {
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=agent&id=${encodeURIComponent(matched.id)}`,
+					});
+					return;
+				}
+				let title = name || "成员";
+				let hint = "全员群内发言者（演示）；未匹配到本地数字员工时仅展示名称";
+				if (name === "系统") {
+					hint = "系统说明、日报时段提示等";
+				} else if (name.includes("经理总览")) {
+					hint = "自动汇总的经理总览摘要（演示数据）";
+				}
+				uni.navigateTo({
+					url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent(title)}&hint=${encodeURIComponent(hint)}`,
 				});
 			},
 			bootstrapHall() {
@@ -192,6 +240,8 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		padding: 8rpx 12rpx;
+		border-radius: 12rpx;
 	}
 
 	.navbar-title {
@@ -305,10 +355,24 @@
 
 	.hall-right {
 		display: flex;
+		flex-direction: row-reverse;
+		align-items: flex-start;
+		gap: 16rpx;
+		max-width: 100%;
+		margin-left: auto;
+	}
+
+	.hall-mine-col {
+		display: flex;
 		flex-direction: column;
 		align-items: flex-end;
-		max-width: 85%;
-		margin-left: auto;
+		max-width: 75%;
+		min-width: 0;
+	}
+
+	.hall-av-self {
+		margin-right: 0 !important;
+		background: linear-gradient(145deg, #3b82f6, #2563eb) !important;
 	}
 
 	.bottom-anchor {

@@ -3,8 +3,12 @@
 		<view class="chat-header-wrap" :style="{ paddingTop: statusBarPx + 'px' }">
 			<view class="chat-header">
 				<text class="back-button iconfont" @click="goBack">&#xe602;</text>
-				<text v-if="headerIsBoss" class="avatar-icon iconfont icon-laoban"></text>
-				<text v-else class="avatar-icon iconfont icon-xiangmu"></text>
+				<text
+					v-if="headerIsBoss"
+					class="avatar-icon iconfont icon-laoban"
+					@click.stop="openHeaderProfile"
+				></text>
+				<text v-else class="avatar-icon iconfont icon-xiangmu" @click.stop="openHeaderProfile"></text>
 				<text class="chat-title">{{ headerTitle }}</text>
 				<text class="chat-more" @click="openSettings">⋯</text>
 			</view>
@@ -36,16 +40,29 @@
 							'msg-selected': isMsgSelected(msg.id),
 						}"
 						@click="onBubbleRowTap(msg)"
+						@longpress.stop="onBubbleLongPress(msg)"
 					>
-						<text v-if="!msg.isMine && msg.senderName" class="bubble-sender">{{ msg.senderName }}</text>
 						<view
-							class="message-bubble"
-							:class="{ 'my-message': msg.isMine }"
-							@longpress.stop="onBubbleLongPress(msg)"
+							v-if="!msg.isMine"
+							class="msg-avatar-wrap peer"
+							@click.stop="onAvatarClick(false, msg)"
 						>
-							<text class="bubble-text">{{ msg.content }}</text>
+							<text class="msg-avatar-text">{{ avatarCharPeer(msg) }}</text>
 						</view>
-						<text class="bubble-meta-time">{{ formatTime(msg.time) }}</text>
+						<view class="bubble-col" :class="{ mine: msg.isMine }">
+							<text v-if="!msg.isMine && msg.senderName" class="bubble-sender">{{ msg.senderName }}</text>
+							<view class="message-bubble" :class="{ 'my-message': msg.isMine }">
+								<text class="bubble-text">{{ msg.content }}</text>
+							</view>
+							<text class="bubble-meta-time">{{ formatTime(msg.time) }}</text>
+						</view>
+						<view
+							v-if="msg.isMine"
+							class="msg-avatar-wrap self"
+							@click.stop="onAvatarClick(true, msg)"
+						>
+							<text class="msg-avatar-text">{{ myAvatarChar }}</text>
+						</view>
 					</view>
 					<view id="chat-bottom-anchor" class="bottom-anchor"></view>
 				</view>
@@ -90,10 +107,13 @@
 		ensureManagerChatSeed,
 		removeVirtualChatMessage,
 		removeVirtualChatMessagesByIds,
+		getDigitalAgentById,
+		getProjectGroupById,
 	} from "@/utils/virtualTeamStore";
 	import * as workflowApi from "@/api/workflowApi";
 	import { pickId } from "@/utils/apiHelpers";
 	import { getUserInfo } from "@/utils/index";
+	import { findAgentBySenderLabel } from "@/utils/participantProfileNav";
 
 	const RECALL_MS = 2 * 60 * 1000;
 
@@ -156,6 +176,11 @@
 			headerIsBoss() {
 				return this.mode === "local" && this.projectName === "老板";
 			},
+			myAvatarChar() {
+				const u = getUserInfo() || {};
+				const n = u.nickname || u.name || u.username || u.phone || u.mobile || "我";
+				return String(n).slice(0, 1);
+			},
 		},
 		onLoad(options) {
 			try {
@@ -217,6 +242,47 @@
 			goBack() {
 				uni.navigateBack();
 			},
+			openHeaderProfile() {
+				if (this.mode === "virtual" && this.virtualKind === "agent" && this.virtualId) {
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=agent&id=${encodeURIComponent(this.virtualId)}`,
+					});
+					return;
+				}
+				if (this.mode === "virtual" && this.virtualKind === "group" && this.virtualId) {
+					const g = getProjectGroupById(this.virtualId);
+					const title = g ? g.name : this.headerTitle || "项目群";
+					const hint = g && g.desc ? g.desc : "项目协作群";
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent(title)}&hint=${encodeURIComponent(hint)}`,
+					});
+					return;
+				}
+				if (this.mode === "remote") {
+					const q = [
+						"kind=basic",
+						`title=${encodeURIComponent(this.headerTitle || "工作流沟通")}`,
+						`hint=${encodeURIComponent("当前工作流会话；成员与权限以系统为准")}`,
+						`workflowTitle=${encodeURIComponent(this.workflowTitle || "")}`,
+						`threadTitle=${encodeURIComponent(this.threadTitle || "")}`,
+					];
+					uni.navigateTo({ url: `/pages/chat/participant-profile?${q.join("&")}` });
+					return;
+				}
+				if (this.mode === "virtual") {
+					const title = this.headerTitle || "会话";
+					let hint = "虚拟会话";
+					if (this.virtualKind === "manager") hint = "经理总览独立会话";
+					else if (this.virtualKind === "hq") hint = "全员大群 / 日报汇总";
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent(title)}&hint=${encodeURIComponent(hint)}`,
+					});
+					return;
+				}
+				uni.navigateTo({
+					url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent(this.projectName || "聊天")}&hint=${encodeURIComponent("本项目本地会话")}`,
+				});
+			},
 			openSettings() {
 				const q = [];
 				if (this.mode === "virtual") {
@@ -266,6 +332,72 @@
 			onBubbleLongPress(msg) {
 				if (this.multiSelectMode) return;
 				this.openBubbleMenu(msg);
+			},
+			avatarCharPeer(msg) {
+				if (this.mode === "virtual" && this.virtualKind === "agent" && this.virtualId) {
+					const a = getDigitalAgentById(this.virtualId);
+					if (a && a.name) return String(a.name).slice(0, 1);
+				}
+				if (this.mode === "local" && this.projectName && (!msg || !msg.senderName)) {
+					return String(this.projectName).slice(0, 1);
+				}
+				const raw = (msg && msg.senderName) || this.virtualTitle || "?";
+				return String(raw).slice(0, 1);
+			},
+			onAvatarClick(isMine, msg) {
+				if (this.multiSelectMode) {
+					this.onBubbleRowTap(msg);
+					return;
+				}
+				this.openParticipantProfile(isMine, msg);
+			},
+			openParticipantProfile(isMine, msg) {
+				if (isMine) {
+					uni.navigateTo({ url: "/pages/chat/participant-profile?kind=self" });
+					return;
+				}
+				if (this.mode === "virtual" && this.virtualKind === "agent" && this.virtualId) {
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=agent&id=${encodeURIComponent(this.virtualId)}`,
+					});
+					return;
+				}
+				const matched = findAgentBySenderLabel((msg && msg.senderName) || "");
+				if (matched) {
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=agent&id=${encodeURIComponent(matched.id)}`,
+					});
+					return;
+				}
+				if (this.mode === "remote") {
+					const title =
+						(msg && msg.senderName) || this.threadTitle || this.workflowTitle || "成员";
+					const q = [
+						"kind=basic",
+						`title=${encodeURIComponent(title)}`,
+						`hint=${encodeURIComponent("工作流会话中的发送方；具体资料以系统为准")}`,
+						`workflowTitle=${encodeURIComponent(this.workflowTitle || "")}`,
+						`threadTitle=${encodeURIComponent(this.threadTitle || "")}`,
+					];
+					uni.navigateTo({ url: `/pages/chat/participant-profile?${q.join("&")}` });
+					return;
+				}
+				if (this.mode === "virtual") {
+					const title = (msg && msg.senderName) || this.virtualTitle || "成员";
+					let hint = "本会话联系人";
+					if (this.virtualKind === "group") hint = "项目群成员（未匹配到数字员工档案时仅展示名称）";
+					else if (this.virtualKind === "manager") hint = "经理总览与系统会话";
+					else if (this.virtualKind === "hq") hint = "全员大群成员";
+					uni.navigateTo({
+						url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent(title)}&hint=${encodeURIComponent(hint)}`,
+					});
+					return;
+				}
+				const title =
+					(msg && msg.senderName) || (this.projectName === "老板" ? "老板" : "对方");
+				uni.navigateTo({
+					url: `/pages/chat/participant-profile?kind=basic&title=${encodeURIComponent(title)}&hint=${encodeURIComponent("本项目会话联系人")}`,
+				});
 			},
 			canRecall(msg) {
 				if (!msg || !msg.isMine) return false;
@@ -405,15 +537,16 @@
 					itemList.push(label);
 					handlers.push(fn);
 				};
+				// 顺序：复制 → 撤回（仅本人 2 分钟内，本地/虚拟）→ 转发 → 多选 → 删除（本地/虚拟）
 				push("复制", () => this.copyText(msg.content));
-				if (!isRemote) {
-					if (msg.isMine && this.canRecall(msg)) {
-						push("撤回", () => this.recallMessage(msg));
-					}
-					push("删除", () => this.deleteMessage(msg));
+				if (!isRemote && msg.isMine && this.canRecall(msg)) {
+					push("撤回", () => this.recallMessage(msg));
 				}
 				push("转发", () => this.forwardMessage(msg));
 				push("多选", () => this.enterMultiSelect(msg));
+				if (!isRemote) {
+					push("删除", () => this.deleteMessage(msg));
+				}
 				uni.showActionSheet({
 					itemList,
 					success: (res) => {
@@ -692,13 +825,52 @@
 
 	.bubble-row {
 		display: flex;
-		flex-direction: column;
-		margin-bottom: 20rpx;
+		flex-direction: row;
 		align-items: flex-start;
+		gap: 16rpx;
+		margin-bottom: 20rpx;
 	}
 
 	.bubble-row.my-message {
+		flex-direction: row-reverse;
+	}
+
+	.bubble-col {
+		flex: 1;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		max-width: calc(100% - 88rpx);
+	}
+
+	.bubble-col.mine {
 		align-items: flex-end;
+	}
+
+	.msg-avatar-wrap {
+		width: 72rpx;
+		height: 72rpx;
+		border-radius: 14rpx;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		flex-shrink: 0;
+		margin-top: 4rpx;
+	}
+
+	.msg-avatar-wrap.peer {
+		background: linear-gradient(145deg, #8b5cf6, #6366f1);
+	}
+
+	.msg-avatar-wrap.self {
+		background: linear-gradient(145deg, #3b82f6, #2563eb);
+	}
+
+	.msg-avatar-text {
+		font-size: 28rpx;
+		font-weight: 600;
+		color: #fff;
 	}
 
 	.bubble-row.multi-on.msg-selected .message-bubble {
